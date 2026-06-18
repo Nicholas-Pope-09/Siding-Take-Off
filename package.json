@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "db:migrate": "npx tsx lib/db/migrate.ts",
+    "build": "npx tsx lib/db/migrate.ts && next build",
     "start": "next start",
     "lint": "eslint ."
   },
@@ -32,8 +33,10 @@
     "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "drizzle-kit": "^0.31.10",
     "postcss": "^8.5",
     "tailwindcss": "^4.2.0",
+    "tsx": "^4.22.4",
     "typescript": "5.7.3"
   },
   "pnpm": {
