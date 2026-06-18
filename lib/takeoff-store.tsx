@@ -51,6 +51,8 @@ export interface Section {
   color: string
   /** raw measurement: sq ft for area, linear ft for line — before pitch */
   rawValue: number
+  /** specific product from the catalog (assigned in Materials view) */
+  productId: string | null
 }
 
 export interface ElevationMeta {
@@ -347,10 +349,15 @@ export function TakeoffProvider({ children }: { children: ReactNode }) {
         loadedSections = loadedSections.map((s) => ({
           ...s,
           pageId: s.pageId ?? legacyId,
+          productId: s.productId ?? null,
         }))
       } else {
         loadedPages = []
       }
+      loadedSections = loadedSections.map((s) => ({
+        ...s,
+        productId: s.productId ?? null,
+      }))
 
       setPages(loadedPages)
       setActivePageId(loadedPages[0]?.id ?? null)
@@ -445,6 +452,7 @@ export function TakeoffProvider({ children }: { children: ReactNode }) {
           material: "Vinyl Lap",
           color: SECTION_PALETTE[colorCounter++ % SECTION_PALETTE.length],
           rawValue: 0,
+          productId: null,
         }
         return [...prev, section]
       })

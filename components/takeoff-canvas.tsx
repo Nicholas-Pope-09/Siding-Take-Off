@@ -705,6 +705,16 @@ export function TakeoffCanvas() {
                 const cen = centroid(s.points)
                 const c = compute(s)
                 const pointsStr = s.points.map((p) => `${p.x},${p.y}`).join(" ")
+                const dims =
+                  scale && s.geometry === "area" && s.points.length >= 2
+                    ? (() => {
+                        const xs = s.points.map((p) => p.x)
+                        const ys = s.points.map((p) => p.y)
+                        const w = (Math.max(...xs) - Math.min(...xs)) / scale
+                        const h = (Math.max(...ys) - Math.min(...ys)) / scale
+                        return { w, h }
+                      })()
+                    : null
                 return (
                   <g key={s.id} onClick={() => selectSection(s.id)}>
                     {s.geometry === "area" ? (
@@ -744,15 +754,15 @@ export function TakeoffCanvas() {
                     {scale && (
                       <g transform={`translate(${cen.x} ${cen.y})`}>
                         <foreignObject
-                          x={-54 * inv}
+                          x={-60 * inv}
                           y={-16 * inv}
-                          width={108 * inv}
-                          height={32 * inv}
+                          width={120 * inv}
+                          height={48 * inv}
                         >
                           <div
-                            style={{ transform: `scale(${inv})`, transformOrigin: "top left", width: 108, height: 32 }}
+                            style={{ transform: `scale(${inv})`, transformOrigin: "top left", width: 120, height: 48 }}
                           >
-                            <div className="flex w-full items-center justify-center">
+                            <div className="flex w-full flex-col items-center justify-center gap-0.5">
                               <span
                                 className="rounded-md px-2 py-0.5 text-[11px] font-semibold tabular-nums text-background shadow"
                                 style={{ background: color }}
@@ -761,6 +771,14 @@ export function TakeoffCanvas() {
                                   ? `${c.slopeArea.toFixed(0)} sf`
                                   : `${c.baseArea.toFixed(0)} lf`}
                               </span>
+                              {dims && (
+                                <span
+                                  className="rounded px-1.5 py-px text-[10px] tabular-nums text-background/90 shadow"
+                                  style={{ background: color, opacity: 0.8 }}
+                                >
+                                  {dims.w.toFixed(1)}′ × {dims.h.toFixed(1)}′
+                                </span>
+                              )}
                             </div>
                           </div>
                         </foreignObject>

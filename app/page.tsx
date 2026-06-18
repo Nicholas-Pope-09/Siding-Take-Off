@@ -1,12 +1,21 @@
+"use client"
+
+import { useState } from "react"
 import { TakeoffProvider } from "@/lib/takeoff-store"
 import { ElevationSidebar } from "@/components/elevation-sidebar"
 import { TakeoffCanvas } from "@/components/takeoff-canvas"
 import { TakeoffSheet } from "@/components/takeoff-sheet"
 import { ProjectToolbar } from "@/components/project-toolbar"
+import { MaterialsView } from "@/components/materials-view"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import { Ruler, FileDown } from "lucide-react"
 
+type View = "takeoff" | "materials" | "reports"
+
 export default function Page() {
+  const [view, setView] = useState<View>("takeoff")
+
   return (
     <TakeoffProvider>
       <div className="flex h-svh w-full flex-col overflow-hidden">
@@ -24,11 +33,36 @@ export default function Page() {
             </span>
           </div>
           <nav className="ml-4 hidden items-center gap-1 text-sm text-muted-foreground md:flex">
-            <span className="rounded-md px-2 py-1 font-medium text-foreground">
+            <button
+              type="button"
+              onClick={() => setView("takeoff")}
+              className={cn(
+                "rounded-md px-2 py-1",
+                view === "takeoff" && "font-medium text-foreground",
+              )}
+            >
               Take-Off
-            </span>
-            <span className="rounded-md px-2 py-1">Materials</span>
-            <span className="rounded-md px-2 py-1">Reports</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("materials")}
+              className={cn(
+                "rounded-md px-2 py-1",
+                view === "materials" && "font-medium text-foreground",
+              )}
+            >
+              Materials
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("reports")}
+              className={cn(
+                "rounded-md px-2 py-1",
+                view === "reports" && "font-medium text-foreground",
+              )}
+            >
+              Reports
+            </button>
           </nav>
           <div className="ml-auto flex items-center gap-2">
             <ProjectToolbar />
@@ -39,12 +73,30 @@ export default function Page() {
           </div>
         </header>
 
-        {/* Three-column workspace */}
-        <div className="flex min-h-0 flex-1">
-          <ElevationSidebar />
-          <TakeoffCanvas />
-          <TakeoffSheet />
-        </div>
+        {/* View content */}
+        {view === "takeoff" && (
+          <div className="flex min-h-0 flex-1">
+            <ElevationSidebar />
+            <TakeoffCanvas />
+            <TakeoffSheet />
+          </div>
+        )}
+
+        {view === "materials" && <MaterialsView />}
+
+        {view === "reports" && (
+          <div className="flex min-h-0 flex-1 items-center justify-center bg-background">
+            <div className="flex flex-col items-center gap-2 text-center">
+              <span className="flex size-12 items-center justify-center rounded-full bg-secondary text-muted-foreground">
+                <FileDown className="size-6" />
+              </span>
+              <p className="text-sm font-medium">Reports coming soon</p>
+              <p className="text-xs text-muted-foreground">
+                Export and reporting features will be available here.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     </TakeoffProvider>
   )

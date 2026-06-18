@@ -114,7 +114,7 @@ function AddSectionMenu({ elevation }: { elevation: ElevationId }) {
               key={t}
               onClick={() => {
                 addSection(elevation, t)
-                setActiveTool(t === "wall" ? "area" : t === "gable" ? "area" : "area")
+                setActiveTool(t === "gable" ? "area" : "rect")
               }}
             >
               <TypeIcon type={t} />
