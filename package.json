@@ -6,7 +6,7 @@
     "dev": "next dev",
     "db:migrate": "npx tsx lib/db/migrate.ts",
     "build": "npx tsx lib/db/migrate.ts && next build",
-    "start": "next start",
+    "start": "next start -p ${PORT:-3000}",
     "lint": "eslint ."
   },
   "dependencies": {
