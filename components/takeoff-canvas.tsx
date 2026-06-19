@@ -51,6 +51,7 @@ import {
   RectangleHorizontal,
   Plus,
   Pencil,
+  PencilRuler,
 } from "lucide-react"
 
 const TOOLS: {
@@ -64,6 +65,7 @@ const TOOLS: {
   { id: "line", label: "Measure Line", hint: "Trim & perimeter (linear ft)", icon: Spline },
   { id: "rect", label: "Rectangle Area", hint: "Click two opposite corners (sq ft)", icon: RectangleHorizontal },
   { id: "area", label: "Polygon Area", hint: "Click each corner for irregular shapes (sq ft)", icon: Crop },
+  { id: "measure", label: "Free Measure", hint: "Point-to-point distance (not saved)", icon: PencilRuler },
 ]
 
 /** Build an axis-aligned rectangle (4 ordered corners) from two opposite corners. */
@@ -140,7 +142,7 @@ export function TakeoffCanvas() {
   // Only the active page's geometry is drawn on the canvas.
   const pageSections = sections.filter((s) => s.pageId === activePageId)
   const drawingTool =
-    activeTool === "line" || activeTool === "area" || activeTool === "rect"
+    activeTool === "line" || activeTool === "area" || activeTool === "rect" || activeTool === "measure"
   const areaTool = activeTool === "area" || activeTool === "rect"
 
   /* ----- coordinate helpers ----- */
@@ -240,6 +242,11 @@ export function TakeoffCanvas() {
   /* ----- finishing a draft ----- */
   const finishDraft = useCallback(() => {
     if (!drawingTool) return
+    if (activeTool === "measure") {
+      setDraft([])
+      setCursor(null)
+      return
+    }
     const min = areaTool ? 3 : 2
     if (draft.length < min) {
       toast.error(
@@ -258,7 +265,7 @@ export function TakeoffCanvas() {
     setCursor(null)
     setActiveTool("select")
     toast.success(`Measurement applied to ${selected.name}.`)
-  }, [areaTool, draft, drawingTool, selected, setActiveTool, setSectionGeometry])
+  }, [activeTool, areaTool, draft, drawingTool, selected, setActiveTool, setSectionGeometry])
 
   const cancelDraft = useCallback(() => {
     setDraft([])
@@ -321,6 +328,14 @@ export function TakeoffCanvas() {
       return
     }
     if (drawingTool) {
+      // Free measure doesn't require a section.
+      if (activeTool === "measure") {
+        const tol = 10 / view.scale
+        const last = draft[draft.length - 1]
+        if (last && Math.hypot(p.x - last.x, p.y - last.y) < tol) return
+        setDraft((d) => [...d, p])
+        return
+      }
       if (!selected) {
         toast.error("Select a section first, then draw your measurement.")
         return
@@ -825,7 +840,7 @@ export function TakeoffCanvas() {
                           .join(" ")
                       }
                       fill="none"
-                      stroke={selected ? selected.color : "var(--accent)"}
+                      stroke={activeTool === "measure" ? "oklch(0.75 0.18 230)" : (selected ? selected.color : "var(--accent)")}
                       strokeWidth={2.5}
                       strokeDasharray="6 4"
                       vectorEffect="non-scaling-stroke"
@@ -848,6 +863,39 @@ export function TakeoffCanvas() {
                       />
                     )
                   })}
+                  {activeTool === "measure" && (() => {
+                    const allPts = [...draft, ...(cursor && draft.length >= 1 ? [cursor] : [])]
+                    return allPts.map((pt, i) => {
+                      if (i === 0) return null
+                      const prev = allPts[i - 1]
+                      const segPx = Math.hypot(pt.x - prev.x, pt.y - prev.y)
+                      const dist = scale ? (segPx / scale).toFixed(1) + "′" : Math.round(segPx) + " px"
+                      const midX = (pt.x + prev.x) / 2
+                      const midY = (pt.y + prev.y) / 2
+                      const isLive = i === allPts.length - 1 && cursor && allPts.length > draft.length
+                      return (
+                        <g key={`m-${i}`} transform={`translate(${midX} ${midY})`}>
+                          <foreignObject
+                            x={-40 * inv}
+                            y={-22 * inv}
+                            width={80 * inv}
+                            height={22 * inv}
+                          >
+                            <div style={{ transform: `scale(${inv})`, transformOrigin: "top left", width: 80, height: 22 }}>
+                              <div className="flex items-center justify-center">
+                                <span
+                                  className="rounded-md px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-white shadow"
+                                  style={{ background: isLive ? "rgba(0,0,0,0.6)" : "rgba(0,0,0,0.85)" }}
+                                >
+                                  {dist}
+                                </span>
+                              </div>
+                            </div>
+                          </foreignObject>
+                        </g>
+                      )
+                    })
+                  })()}
                 </g>
               )}
 
@@ -906,15 +954,33 @@ export function TakeoffCanvas() {
               <span className="text-xs text-muted-foreground">
                 {activeTool === "calibrate"
                   ? `Click two points of a known length${calib.pts.length === 1 ? " — pick the second point" : ""}`
-                  : !selected
-                    ? "Select a section to measure into"
-                    : activeTool === "rect"
-                      ? `${selected.name}: click one corner, then the opposite corner`
-                      : activeTool === "area"
-                        ? `${selected.name}: click to add points, then Finish, double-click, or click the first point to close`
-                        : `${selected.name}: click to add points, then Finish or double-click to end`}
+                  : activeTool === "measure"
+                    ? `Free measure: click to place points${!scale ? " (calibrate for feet)" : ""}`
+                    : !selected
+                      ? "Select a section to measure into"
+                      : activeTool === "rect"
+                        ? `${selected.name}: click one corner, then the opposite corner`
+                        : activeTool === "area"
+                          ? `${selected.name}: click to add points, then Finish, double-click, or click the first point to close`
+                          : `${selected.name}: click to add points, then Finish or double-click to end`}
               </span>
-              {drawingTool && activeTool !== "rect" && (
+              {activeTool === "measure" && draft.length >= 2 && (
+                <Badge variant="secondary" className="font-mono">
+                  Total: {(() => {
+                    let total = 0
+                    for (let i = 1; i < draft.length; i++)
+                      total += Math.hypot(draft[i].x - draft[i - 1].x, draft[i].y - draft[i - 1].y)
+                    return scale ? (total / scale).toFixed(1) + "′" : Math.round(total) + " px"
+                  })()}
+                </Badge>
+              )}
+              {activeTool === "measure" && draft.length > 0 && (
+                <Button size="sm" variant="outline" className="h-7 gap-1" onClick={finishDraft}>
+                  <X className="size-3.5" />
+                  Clear
+                </Button>
+              )}
+              {drawingTool && activeTool !== "rect" && activeTool !== "measure" && (
                 <>
                   <Badge variant="secondary" className="font-mono">
                     {draft.length} pts

@@ -17,7 +17,7 @@ export type ElevationId = "front" | "rear" | "left" | "right"
 
 export type SectionType = "wall" | "gable" | "deduction"
 
-export type ToolType = "select" | "calibrate" | "line" | "area" | "rect"
+export type ToolType = "select" | "calibrate" | "line" | "area" | "rect" | "measure"
 
 export interface Point {
   x: number
