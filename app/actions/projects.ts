@@ -1,8 +1,10 @@
 "use server"
 
 import { db } from "@/lib/db"
-import { projects } from "@/lib/db/schema"
-import { desc, eq } from "drizzle-orm"
+import { projects, takeoffCorrections } from "@/lib/db/schema"
+import { and, desc, eq, inArray } from "drizzle-orm"
+import { extractCorrections } from "@/lib/auto-takeoff/corrections"
+import type { TakeoffSnapshot } from "@/lib/takeoff-store"
 
 /** Serialized take-off payload stored in the `data` column. */
 export interface TakeoffData {
@@ -57,6 +59,7 @@ export async function createProject(
     .insert(projects)
     .values({ name: trimmed, data })
     .returning({ id: projects.id })
+  await recordCorrections(row.id, data)
   return { id: row.id }
 }
 
@@ -71,6 +74,40 @@ export async function updateProject(
     .update(projects)
     .set({ name: trimmed, data, updatedAt: new Date() })
     .where(eq(projects.id, id))
+  await recordCorrections(id, data)
+}
+
+/**
+ * Refresh the correction log for the auto runs in this save. Rows from older
+ * runs (since replaced by a re-run) are kept, so history accumulates. A
+ * failure here never blocks saving the project itself.
+ */
+async function recordCorrections(projectId: number, data: TakeoffData) {
+  try {
+    const snapshot = data as TakeoffSnapshot
+    const runs = (snapshot.pages ?? [])
+      .map((p) => p.autoTakeoff?.runAt)
+      .filter((r): r is string => Boolean(r))
+    if (runs.length === 0) return
+    const rows = extractCorrections(snapshot)
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(takeoffCorrections)
+        .where(
+          and(
+            eq(takeoffCorrections.projectId, projectId),
+            inArray(takeoffCorrections.runAt, runs),
+          ),
+        )
+      if (rows.length) {
+        await tx
+          .insert(takeoffCorrections)
+          .values(rows.map((r) => ({ ...r, projectId })))
+      }
+    })
+  } catch (err) {
+    console.error("[corrections] could not record corrections", err)
+  }
 }
 
 /** Rename a project. */

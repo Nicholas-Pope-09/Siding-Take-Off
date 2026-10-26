@@ -13,6 +13,7 @@ import {
   type Section,
 } from "@/lib/takeoff-store"
 import { boxFeet, feetInches } from "@/lib/auto-takeoff/client"
+import { pageCorrections, type CorrectionRow } from "@/lib/auto-takeoff/corrections"
 import {
   CheckCircle2,
   Circle,
@@ -172,6 +173,7 @@ export function AutoReviewPanel() {
             key={page.id}
             page={page}
             sections={autoSections.filter((s) => s.pageId === page.id)}
+            corrections={pageCorrections(page, sections)}
             selectedSectionId={selectedSectionId}
             onFocus={focus}
             onRecalibrate={() => {
@@ -194,6 +196,7 @@ export function AutoReviewPanel() {
 function PageReview({
   page,
   sections,
+  corrections,
   selectedSectionId,
   onFocus,
   onRecalibrate,
@@ -204,6 +207,7 @@ function PageReview({
 }: {
   page: Page
   sections: Section[]
+  corrections: CorrectionRow[]
   selectedSectionId: string | null
   onFocus: (s: Section) => void
   onRecalibrate: () => void
@@ -215,6 +219,8 @@ function PageReview({
   const record = page.autoTakeoff
   const unverified = sections.filter((s) => !s.verified)
   const scaleWarn = !page.scale || page.scaleConfidence === "low"
+  const tally = (o: CorrectionRow["outcome"]) =>
+    corrections.filter((c) => c.outcome === o).length
 
   return (
     <div className="border-b border-border p-4">
@@ -275,6 +281,17 @@ function PageReview({
           </p>
         )}
       </div>
+
+      {corrections.length > 0 && (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Learning from this sheet:{" "}
+          <span className="text-foreground">{tally("confirmed")} confirmed</span> ·{" "}
+          <span className="text-foreground">{tally("adjusted")} adjusted</span> ·{" "}
+          <span className="text-foreground">{tally("deleted")} deleted</span> ·{" "}
+          <span className="text-foreground">{tally("added")} added by you</span>
+          . Saved with the project.
+        </p>
+      )}
 
       {record && record.result.notes.length > 0 && (
         <div className="mt-2 rounded-lg border border-border bg-card p-3 text-xs">

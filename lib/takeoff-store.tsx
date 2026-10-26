@@ -42,6 +42,8 @@ export interface Page {
   scaleConfidence?: Confidence | null
   /** the raw vision read of this sheet, kept untouched for double-checking */
   autoTakeoff?: AutoTakeoffRecord | null
+  /** auto measurements deleted since the last auto run on this sheet */
+  deletedAuto?: DeletedAutoSection[]
 }
 
 export type Confidence = "high" | "medium" | "low"
@@ -60,6 +62,19 @@ export interface AutoTakeoffRecord {
   /** factor that mapped the sent image back to blueprint pixels */
   imageFactor: number
   result: AutoTakeoffResult
+  /** hand-drawn sections that already existed when this run was applied */
+  manualAtRun?: string[]
+}
+
+/** An auto measurement the estimator deleted, kept to learn from. */
+export interface DeletedAutoSection {
+  id: string
+  name: string
+  elevation: ElevationId
+  type: SectionType
+  opening: OpeningKind | null
+  confidence: Confidence | null
+  points: Point[]
 }
 
 export interface Section {
@@ -90,6 +105,8 @@ export interface Section {
   opening?: OpeningKind | null
   /** what the auto take-off read for this item (tag, size callout, cladding) */
   note?: string | null
+  /** the auto take-off's own geometry/pitch, to compare against corrections */
+  original?: { points: Point[]; pitch: string } | null
 }
 
 export interface ElevationMeta {
@@ -389,7 +406,15 @@ export function TakeoffProvider({ children }: { children: ReactNode }) {
       setPages((prev) =>
         prev.map((p) => {
           if (p.id !== pageId) return p
-          const next: Page = { ...p, autoTakeoff: run.record }
+          // Anything hand-drawn after this point counts as an item the run missed.
+          const manualAtRun = sections
+            .filter((s) => s.pageId === pageId && s.source !== "auto")
+            .map((s) => s.id)
+          const next: Page = {
+            ...p,
+            autoTakeoff: { ...run.record, manualAtRun },
+            deletedAuto: [],
+          }
           if (run.calibration) {
             next.scale = run.calibration.scale
             next.scaleSource = run.calibration.source
@@ -412,6 +437,7 @@ export function TakeoffProvider({ children }: { children: ReactNode }) {
           color: SECTION_PALETTE[colorCounter++ % SECTION_PALETTE.length],
           rawValue: 0,
           productId: null,
+          original: { points: s.points, pitch: s.pitch },
         }))
         return [...kept, ...created]
       })
@@ -419,7 +445,7 @@ export function TakeoffProvider({ children }: { children: ReactNode }) {
       setActiveTool("select")
       setDirty(true)
     },
-    [],
+    [sections],
   )
 
   const markSaved = useCallback(() => setDirty(false), [])
@@ -576,11 +602,37 @@ export function TakeoffProvider({ children }: { children: ReactNode }) {
 
   const deleteSection = useCallback(
     (id: string) => {
+      const removed = sections.find((s) => s.id === id)
+      // Remember deleted auto measurements so the correction log can learn
+      // what the auto take-off picked up that shouldn't be there.
+      if (removed?.source === "auto") {
+        setPages((prev) =>
+          prev.map((p) =>
+            p.id === removed.pageId
+              ? {
+                  ...p,
+                  deletedAuto: [
+                    ...(p.deletedAuto ?? []),
+                    {
+                      id: removed.id,
+                      name: removed.name,
+                      elevation: removed.elevation,
+                      type: removed.type,
+                      opening: removed.opening ?? null,
+                      confidence: removed.confidence ?? null,
+                      points: removed.original?.points ?? removed.points,
+                    },
+                  ],
+                }
+              : p,
+          ),
+        )
+      }
       setSections((prev) => prev.filter((s) => s.id !== id))
       setSelectedSectionId((cur) => (cur === id ? null : cur))
       setDirty(true)
     },
-    [],
+    [sections],
   )
 
   const setSectionGeometry = useCallback(

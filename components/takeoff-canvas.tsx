@@ -71,7 +71,7 @@ const TOOLS: {
   hint: string
   icon: React.ComponentType<{ className?: string }>
 }[] = [
-  { id: "select", label: "Pan / Select", hint: "Drag to pan, click a shape to select", icon: MousePointer2 },
+  { id: "select", label: "Pan / Select", hint: "Drag to pan, click a shape to select, then drag its corners to adjust", icon: MousePointer2 },
   { id: "calibrate", label: "Calibrate Scale", hint: "Draw a line of known length", icon: Ruler },
   { id: "line", label: "Measure Line", hint: "Trim & perimeter (linear ft)", icon: Spline },
   { id: "rect", label: "Rectangle Area", hint: "Click two opposite corners (sq ft)", icon: RectangleHorizontal },
@@ -87,6 +87,31 @@ function rectCorners(a: Point, b: Point): Point[] {
     { x: b.x, y: b.y },
     { x: a.x, y: b.y },
   ]
+}
+
+/** True for 4 corners in rectCorners order (edges alternate horizontal/vertical). */
+function isAxisRect(points: Point[]): boolean {
+  if (points.length !== 4) return false
+  const [a, b, c, d] = points
+  const eq = (u: number, v: number) => Math.abs(u - v) < 0.5
+  return (
+    (eq(a.y, b.y) && eq(b.x, c.x) && eq(c.y, d.y) && eq(d.x, a.x)) ||
+    (eq(a.x, b.x) && eq(b.y, c.y) && eq(c.x, d.x) && eq(d.y, a.y))
+  )
+}
+
+/** Move one corner; a rectangle stays a rectangle by moving its two neighbours. */
+function moveCorner(points: Point[], index: number, to: Point, rect: boolean): Point[] {
+  const next = points.map((p) => ({ ...p }))
+  const from = points[index]
+  next[index] = { ...to }
+  if (rect) {
+    for (const j of [(index + 1) % 4, (index + 3) % 4]) {
+      if (Math.abs(points[j].y - from.y) < 0.5) next[j].y = to.y
+      else next[j].x = to.x
+    }
+  }
+  return next
 }
 
 function centroid(points: Point[]): Point {
@@ -144,6 +169,9 @@ export function TakeoffCanvas() {
     open: false,
     feet: "",
   })
+  // Corner being dragged on the selected section, and its live geometry.
+  const dragRef = useRef<{ id: string; index: number; rect: boolean; moved: boolean } | null>(null)
+  const [dragPts, setDragPts] = useState<{ id: string; points: Point[] } | null>(null)
   const panRef = useRef<{ active: boolean; sx: number; sy: number; tx: number; ty: number }>({
     active: false,
     sx: 0,
@@ -385,6 +413,8 @@ export function TakeoffCanvas() {
     setDraft([])
     setCursor(null)
     setCalib((c) => ({ ...c, pts: [] }))
+    dragRef.current = null
+    setDragPts(null)
   }, [])
 
   /* ----- keyboard ----- */
@@ -412,7 +442,23 @@ export function TakeoffCanvas() {
     }
   }
 
+  function startCornerDrag(e: React.PointerEvent, sectionId: string, index: number) {
+    const s = sections.find((x) => x.id === sectionId)
+    if (!s) return
+    e.stopPropagation()
+    svgRef.current?.setPointerCapture?.(e.pointerId)
+    dragRef.current = { id: sectionId, index, rect: isAxisRect(s.points), moved: false }
+    setDragPts({ id: sectionId, points: s.points })
+  }
+
   function handlePointerMove(e: React.PointerEvent) {
+    const drag = dragRef.current
+    if (drag && dragPts) {
+      const p = screenToImage(e.clientX, e.clientY)
+      drag.moved = true
+      setDragPts({ id: drag.id, points: moveCorner(dragPts.points, drag.index, p, drag.rect) })
+      return
+    }
     if (panRef.current.active) {
       setView((v) => ({
         ...v,
@@ -428,6 +474,17 @@ export function TakeoffCanvas() {
 
   function handlePointerUp() {
     panRef.current.active = false
+    const drag = dragRef.current
+    if (drag) {
+      const s = sections.find((x) => x.id === drag.id)
+      if (s && dragPts && drag.moved) {
+        setSectionGeometry(s.id, dragPts.points, s.geometry)
+        // Correcting an auto measurement counts as checking it.
+        if (s.source === "auto" && !s.verified) updateSection(s.id, { verified: true })
+      }
+      dragRef.current = null
+      setDragPts(null)
+    }
   }
 
   function handleClick(e: React.MouseEvent) {
@@ -844,8 +901,14 @@ export function TakeoffCanvas() {
               )}
 
               {/* committed sections (active page only) */}
-              {pageSections.map((s) => {
+              {pageSections.map((committed) => {
+                // While a corner is being dragged, draw the live geometry.
+                const s =
+                  dragPts?.id === committed.id
+                    ? { ...committed, points: dragPts.points }
+                    : committed
                 if (s.points.length === 0) return null
+                const editable = activeTool === "select" && s.id === selectedSectionId
                 const color = s.color
                 const isSel = s.id === selectedSectionId
                 const cen = centroid(s.points)
@@ -888,11 +951,15 @@ export function TakeoffCanvas() {
                         key={i}
                         cx={p.x}
                         cy={p.y}
-                        r={4 * inv}
-                        fill="var(--background)"
-                        stroke={color}
+                        r={(editable ? 6 : 4) * inv}
+                        fill={editable ? color : "var(--background)"}
+                        stroke={editable ? "var(--background)" : color}
                         strokeWidth={2}
                         vectorEffect="non-scaling-stroke"
+                        className={editable ? "cursor-move" : undefined}
+                        onPointerDown={
+                          editable ? (e) => startCornerDrag(e, s.id, i) : undefined
+                        }
                       />
                     ))}
                     {scale && (
