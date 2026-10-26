@@ -1,6 +1,7 @@
 "use client"
 
 import type { AutoTakeoffResult } from "@/lib/auto-takeoff/schema"
+import { ELEVATION_PREFIX } from "@/lib/auto-takeoff/client"
 import {
   createContext,
   useContext,
@@ -279,6 +280,8 @@ interface TakeoffState {
   selectSection: (id: string | null) => void
   addSection: (elevation: ElevationId, type: SectionType) => string
   updateSection: (id: string, patch: Partial<Section>) => void
+  /** move a section to another elevation, updating an F-/R-/L-/Rt- label */
+  moveSection: (id: string, elevation: ElevationId) => void
   deleteSection: (id: string) => void
   setSectionGeometry: (
     id: string,
@@ -600,6 +603,32 @@ export function TakeoffProvider({ children }: { children: ReactNode }) {
     setDirty(true)
   }, [])
 
+  const moveSection = useCallback((id: string, elevation: ElevationId) => {
+    setSections((prev) => {
+      const s = prev.find((x) => x.id === id)
+      if (!s || s.elevation === elevation) return prev
+      let name = s.name
+      const m = s.name.match(/^(F|R|L|Rt)-(.*?)(\d+)$/)
+      if (m && m[1] === ELEVATION_PREFIX[s.elevation]) {
+        const prefix = ELEVATION_PREFIX[elevation]
+        const stem = m[2]
+        const taken = new Set(
+          prev
+            .filter((x) => x.pageId === s.pageId && x.elevation === elevation)
+            .map((x) => x.name),
+        )
+        let n = Number(m[3])
+        if (taken.has(`${prefix}-${stem}${n}`)) {
+          n = 1
+          while (taken.has(`${prefix}-${stem}${n}`)) n++
+        }
+        name = `${prefix}-${stem}${n}`
+      }
+      return prev.map((x) => (x.id === id ? { ...x, elevation, name } : x))
+    })
+    setDirty(true)
+  }, [])
+
   const deleteSection = useCallback(
     (id: string) => {
       const removed = sections.find((s) => s.id === id)
@@ -675,6 +704,7 @@ export function TakeoffProvider({ children }: { children: ReactNode }) {
       selectSection: setSelectedSectionId,
       addSection,
       updateSection,
+      moveSection,
       deleteSection,
       setSectionGeometry,
       compute,
@@ -704,6 +734,7 @@ export function TakeoffProvider({ children }: { children: ReactNode }) {
       applyAutoTakeoff,
       addSection,
       updateSection,
+      moveSection,
       deleteSection,
       setSectionGeometry,
       compute,

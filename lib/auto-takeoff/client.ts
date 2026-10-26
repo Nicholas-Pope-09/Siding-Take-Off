@@ -321,7 +321,8 @@ function clipToBounds(
 
 type NewSection = Omit<Section, "id" | "pageId" | "color" | "rawValue" | "productId">
 
-const PREFIX: Record<ElevationId, string> = {
+/** Label prefix per elevation: F-W1, R-Gable 1, L-D2, Rt-Wall 1 */
+export const ELEVATION_PREFIX: Record<ElevationId, string> = {
   front: "F",
   rear: "R",
   left: "L",
@@ -367,7 +368,7 @@ export function buildSections(
   let surfaces: { name: string; points: Point[] }[] = []
 
   for (const el of result.elevations) {
-    const p = PREFIX[el.elevation]
+    const p = ELEVATION_PREFIX[el.elevation]
     surfaces = []
     let walls = 0
     let gables = 0

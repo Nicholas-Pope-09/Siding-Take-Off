@@ -14,8 +14,13 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { useState } from "react"
 import { cn } from "@/lib/utils"
 import {
   ELEVATIONS,
@@ -32,6 +37,10 @@ import {
   Scissors,
   Building2,
   ChevronDown,
+  MoreHorizontal,
+  Pencil,
+  ArrowRightLeft,
+  Trash2,
 } from "lucide-react"
 
 function TypeIcon({ type, className }: { type: SectionType; className?: string }) {
@@ -41,17 +50,43 @@ function TypeIcon({ type, className }: { type: SectionType; className?: string }
 }
 
 function SectionRow({ section }: { section: Section }) {
-  const { selectedSectionId, selectSection, compute } = useTakeoff()
+  const {
+    selectedSectionId,
+    selectSection,
+    compute,
+    updateSection,
+    moveSection,
+    deleteSection,
+  } = useTakeoff()
   const active = selectedSectionId === section.id
   const c = compute(section)
   const hasGeometry = section.points.length > 0
+  const [editing, setEditing] = useState(false)
+  const [draftName, setDraftName] = useState(section.name)
+
+  function startRename() {
+    setDraftName(section.name)
+    setEditing(true)
+  }
+
+  function commitRename() {
+    const name = draftName.trim()
+    if (name && name !== section.name) updateSection(section.id, { name })
+    setEditing(false)
+  }
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => selectSection(section.id)}
+      onKeyDown={(e) => {
+        if (editing) return
+        if (e.key === "Enter") selectSection(section.id)
+        if (e.key === "F2") startRename()
+      }}
       className={cn(
-        "group flex w-full items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left text-sm transition-colors",
+        "group flex w-full cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left text-sm transition-colors",
         active
           ? "border-primary/40 bg-primary/10 text-foreground"
           : "text-muted-foreground hover:bg-secondary hover:text-foreground",
@@ -69,7 +104,31 @@ function SectionRow({ section }: { section: Section }) {
       >
         <TypeIcon type={section.type} className="size-3.5" />
       </span>
-      <span className="min-w-0 flex-1 truncate font-medium">{section.name}</span>
+      {editing ? (
+        <input
+          autoFocus
+          value={draftName}
+          onChange={(e) => setDraftName(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitRename()
+            if (e.key === "Escape") setEditing(false)
+          }}
+          className="min-w-0 flex-1 rounded border border-input bg-background px-1 py-0.5 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        />
+      ) : (
+        <span
+          className="min-w-0 flex-1 truncate font-medium"
+          onDoubleClick={(e) => {
+            e.stopPropagation()
+            startRename()
+          }}
+          title="Double-click to rename"
+        >
+          {section.name}
+        </span>
+      )}
       {hasGeometry ? (
         <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
           {section.geometry === "area"
@@ -79,7 +138,56 @@ function SectionRow({ section }: { section: Section }) {
       ) : (
         <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
       )}
-    </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          onClick={(e) => e.stopPropagation()}
+          render={
+            <button
+              type="button"
+              className={cn(
+                "shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground",
+                active ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+              )}
+              aria-label={`Options for ${section.name}`}
+            >
+              <MoreHorizontal className="size-4" />
+            </button>
+          }
+        />
+        {/* finalFocus off so closing the menu doesn't steal focus from the rename input */}
+        <DropdownMenuContent align="end" className="w-44" finalFocus={false}>
+          <DropdownMenuItem onClick={startRename}>
+            <Pencil />
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <ArrowRightLeft />
+              Move to
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              {ELEVATIONS.map((el) => (
+                <DropdownMenuItem
+                  key={el.id}
+                  disabled={el.id === section.elevation}
+                  onClick={() => moveSection(section.id, el.id)}
+                >
+                  {el.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="text-destructive focus:text-destructive"
+            onClick={() => deleteSection(section.id)}
+          >
+            <Trash2 />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   )
 }
 
