@@ -292,6 +292,33 @@ function snapOutline(sheet: PreparedSheet, pts: Point[]): Point[] {
 /* Sections                                                            */
 /* ------------------------------------------------------------------ */
 
+/** Ray-casting point-in-polygon test. */
+function insidePolygon(pt: Point, poly: Point[]): boolean {
+  let inside = false
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i]
+    const b = poly[j]
+    if (a.y > pt.y !== b.y > pt.y && pt.x < ((b.x - a.x) * (pt.y - a.y)) / (b.y - a.y) + a.x)
+      inside = !inside
+  }
+  return inside
+}
+
+/** Clip a box to the bounding box of an outline. */
+function clipToBounds(
+  box: { left: number; top: number; right: number; bottom: number },
+  poly: Point[],
+) {
+  const xs = poly.map((p) => p.x)
+  const ys = poly.map((p) => p.y)
+  return {
+    left: Math.max(box.left, Math.min(...xs)),
+    right: Math.min(box.right, Math.max(...xs)),
+    top: Math.max(box.top, Math.min(...ys)),
+    bottom: Math.min(box.bottom, Math.max(...ys)),
+  }
+}
+
 type NewSection = Omit<Section, "id" | "pageId" | "color" | "rawValue" | "productId">
 
 const PREFIX: Record<ElevationId, string> = {
@@ -336,9 +363,12 @@ export function buildSections(
 ): NewSection[] {
   const k = sheet.toBlueprint
   const out: NewSection[] = []
+  // Snapped outlines of this elevation's surfaces, for clipping openings.
+  let surfaces: { name: string; points: Point[] }[] = []
 
   for (const el of result.elevations) {
     const p = PREFIX[el.elevation]
+    surfaces = []
     let walls = 0
     let gables = 0
     const openingCounts: Record<OpeningKind, number> = {
@@ -352,12 +382,15 @@ export function buildSections(
       const scaled = s.outline.map((pt) => ({ x: pt.x * k, y: pt.y * k }))
       const isGable = s.kind === "gable"
       const n = isGable ? ++gables : ++walls
+      const name = `${p}-${isGable ? "Gable" : "Wall"} ${n}`
+      const points = snapOutline(sheet, scaled)
+      surfaces.push({ name, points })
       out.push({
         elevation: el.elevation,
-        name: `${p}-${isGable ? "Gable" : "Wall"} ${n}`,
+        name,
         type: isGable ? "gable" : "wall",
         pitch: isGable ? normalizePitch(s.pitch) : "flat",
-        points: snapOutline(sheet, scaled),
+        points,
         geometry: "area",
         material: CLADDING_MATERIAL[s.cladding] ?? "Vinyl Lap",
         source: "auto",
@@ -371,7 +404,22 @@ export function buildSections(
     }
 
     for (const o of el.openings) {
-      const box = snapBox(sheet, o.box, k)
+      const snapped = snapBox(sheet, o.box, k)
+      // Only deduct the part of the opening that lies on a measured surface,
+      // e.g. a garage door that runs below the wall outline down to the slab.
+      const host = surfaces.find((s) =>
+        insidePolygon(
+          { x: (snapped.left + snapped.right) / 2, y: (snapped.top + snapped.bottom) / 2 },
+          s.points,
+        ),
+      )
+      const box = host ? clipToBounds(snapped, host.points) : snapped
+      const clipped =
+        host &&
+        (box.left !== snapped.left ||
+          box.right !== snapped.right ||
+          box.top !== snapped.top ||
+          box.bottom !== snapped.bottom)
       if (box.right - box.left < 4 || box.bottom - box.top < 4) continue
       const n = ++openingCounts[o.kind]
       out.push({
@@ -395,6 +443,7 @@ export function buildSections(
           o.kind === "garage_door" ? "garage door" : o.kind,
           o.tag ? `mark ${o.tag}` : null,
           o.sizeCallout ? `callout ${o.sizeCallout}` : null,
+          clipped ? `trimmed to ${host.name}` : null,
         ]
           .filter(Boolean)
           .join(" · "),
