@@ -30,6 +30,37 @@ ELEVATIONS
 Use confidence "low" for anything you had to guess. Put anything the estimator should double-check in notes (hidden or overlapping areas, items you skipped, ambiguous scale).`
 }
 
+/**
+ * Read the API key, tolerating a stray space/case difference in the variable
+ * name or quotes around the value, which are easy to introduce in a hosting
+ * dashboard.
+ */
+function apiKeyFromEnv(): string | undefined {
+  for (const name of Object.keys(process.env)) {
+    if (name.trim().toUpperCase() !== "ANTHROPIC_API_KEY") continue
+    const value = process.env[name]?.trim().replace(/^["']|["']$/g, "")
+    if (value) return value
+  }
+  return undefined
+}
+
+/** Explain a missing key without revealing any values. */
+function missingKeyMessage(): string {
+  const similar = Object.keys(process.env).filter((k) => /ANTHROPIC|API_?KEY/i.test(k))
+  const where = [process.env.RAILWAY_SERVICE_NAME, process.env.RAILWAY_ENVIRONMENT_NAME]
+    .filter(Boolean)
+    .join(" / ")
+  return [
+    "ANTHROPIC_API_KEY is not set on the server.",
+    where ? `Running as: ${where}.` : null,
+    similar.length
+      ? `Similar variables found: ${similar.join(", ")} (an empty value also counts as not set).`
+      : "No similar variables found.",
+  ]
+    .filter(Boolean)
+    .join(" ")
+}
+
 export async function POST(req: Request) {
   let body: { image?: string; mediaType?: string; width?: number; height?: number }
   try {
@@ -41,14 +72,12 @@ export async function POST(req: Request) {
   if (!image || !width || !height || (mediaType !== "image/png" && mediaType !== "image/jpeg")) {
     return Response.json({ error: "Missing sheet image." }, { status: 400 })
   }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return Response.json(
-      { error: "ANTHROPIC_API_KEY is not set on the server." },
-      { status: 500 },
-    )
+  const apiKey = apiKeyFromEnv()
+  if (!apiKey) {
+    return Response.json({ error: missingKeyMessage() }, { status: 500 })
   }
 
-  const client = new Anthropic()
+  const client = new Anthropic({ apiKey })
   try {
     const stream = client.beta.messages.stream({
       model: MODEL,
