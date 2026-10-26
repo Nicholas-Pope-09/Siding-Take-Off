@@ -45,6 +45,19 @@ export async function renderPdfPage(
   pageNumber: number,
   targetWidth: number,
 ): Promise<string> {
+  return (await renderPdfPageWithScale(doc, pageNumber, targetWidth)).dataUrl
+}
+
+/**
+ * Same as `renderPdfPage`, but also returns image pixels per paper inch
+ * (PDF user space is 72 units per inch), which lets the auto take-off turn a
+ * printed scale like 1/4" = 1'-0" straight into pixels per foot.
+ */
+export async function renderPdfPageWithScale(
+  doc: PDFDocumentProxy,
+  pageNumber: number,
+  targetWidth: number,
+): Promise<{ dataUrl: string; pxPerInch: number }> {
   const page = await doc.getPage(pageNumber)
   const base = page.getViewport({ scale: 1 })
   const scale = targetWidth / base.width
@@ -61,5 +74,5 @@ export async function renderPdfPage(
   ctx.fillRect(0, 0, canvas.width, canvas.height)
 
   await page.render({ canvas, canvasContext: ctx, viewport }).promise
-  return canvas.toDataURL("image/png")
+  return { dataUrl: canvas.toDataURL("image/png"), pxPerInch: scale * 72 }
 }

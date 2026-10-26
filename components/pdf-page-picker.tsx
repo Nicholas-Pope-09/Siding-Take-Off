@@ -14,7 +14,12 @@ import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import { openPdf, renderPdfPage, type PdfDoc } from "@/lib/pdf"
+import {
+  openPdf,
+  renderPdfPage,
+  renderPdfPageWithScale,
+  type PdfDoc,
+} from "@/lib/pdf"
 import { FileText, Loader2, Check } from "lucide-react"
 
 /** Resolution (px wide) of the page rendered into the canvas once chosen. */
@@ -25,6 +30,8 @@ const THUMB_WIDTH = 260
 export interface PickedPage {
   dataUrl: string
   label: string
+  /** image pixels per paper inch, for auto-calibration */
+  pxPerInch: number
 }
 
 export function PdfPagePicker({
@@ -99,8 +106,12 @@ export function PdfPagePicker({
       const pageNumbers = [...selected].sort((a, b) => a - b)
       const pages: PickedPage[] = []
       for (const n of pageNumbers) {
-        const url = await renderPdfPage(pdf.doc, n, FULL_WIDTH)
-        pages.push({ dataUrl: url, label: `Sheet ${n}` })
+        const { dataUrl, pxPerInch } = await renderPdfPageWithScale(
+          pdf.doc,
+          n,
+          FULL_WIDTH,
+        )
+        pages.push({ dataUrl, label: `Sheet ${n}`, pxPerInch })
       }
       onSelect(pages)
     } catch (err) {

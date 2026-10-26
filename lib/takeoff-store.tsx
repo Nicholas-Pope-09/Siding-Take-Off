@@ -1,5 +1,6 @@
 "use client"
 
+import type { AutoTakeoffResult } from "@/lib/auto-takeoff/schema"
 import {
   createContext,
   useContext,
@@ -32,6 +33,33 @@ export interface Page {
   blueprint: string
   /** pixels per foot, calibrated independently for this page */
   scale: number | null
+  /** image pixels per paper inch, known when the sheet was rendered from a PDF */
+  pxPerInch?: number | null
+  /** how the scale was set: drawn by hand, or derived by the auto take-off */
+  scaleSource?: ScaleSource | null
+  /** human-readable explanation of an auto calibration, for review */
+  scaleNote?: string | null
+  scaleConfidence?: Confidence | null
+  /** the raw vision read of this sheet, kept untouched for double-checking */
+  autoTakeoff?: AutoTakeoffRecord | null
+}
+
+export type Confidence = "high" | "medium" | "low"
+
+export type ScaleSource =
+  | "manual"
+  | "auto-notation"
+  | "auto-dimension"
+  | "auto-standard"
+
+export type OpeningKind = "window" | "door" | "garage_door"
+
+export interface AutoTakeoffRecord {
+  runAt: string
+  model: string
+  /** factor that mapped the sent image back to blueprint pixels */
+  imageFactor: number
+  result: AutoTakeoffResult
 }
 
 export interface Section {
@@ -53,6 +81,15 @@ export interface Section {
   rawValue: number
   /** specific product from the catalog (assigned in Materials view) */
   productId: string | null
+  /** "auto" when created by the auto take-off (absent = drawn by hand) */
+  source?: "manual" | "auto"
+  /** auto measurements stay unverified until the estimator checks them */
+  verified?: boolean
+  confidence?: Confidence
+  /** for deductions: what kind of opening this is */
+  opening?: OpeningKind | null
+  /** what the auto take-off read for this item (tag, size callout, cladding) */
+  note?: string | null
 }
 
 export interface ElevationMeta {
@@ -193,7 +230,9 @@ interface TakeoffState {
   resetProject: () => void
   // page actions
   addPage: (name: string, blueprint: string) => string
-  addPages: (pages: { name: string; blueprint: string }[]) => void
+  addPages: (
+    pages: { name: string; blueprint: string; pxPerInch?: number | null }[],
+  ) => void
   setActivePage: (id: string) => void
   renamePage: (id: string, name: string) => void
   deletePage: (id: string) => void
@@ -201,6 +240,24 @@ interface TakeoffState {
   setActivePageBlueprint: (url: string) => void
   // actions
   setScale: (pxPerFoot: number | null) => void
+  /**
+   * Apply an auto take-off to a sheet: set its calibration (unless null),
+   * store the raw read, and replace that sheet's previous auto sections.
+   */
+  applyAutoTakeoff: (
+    pageId: string,
+    run: {
+      calibration: {
+        scale: number
+        source: ScaleSource
+        note: string
+        confidence: Confidence
+      } | null
+      calibrationNote: string | null
+      record: AutoTakeoffRecord
+      sections: Omit<Section, "id" | "pageId" | "color" | "rawValue" | "productId">[]
+    },
+  ) => void
   setActiveTool: (tool: ToolType) => void
   selectSection: (id: string | null) => void
   addSection: (elevation: ElevationId, type: SectionType) => string
@@ -247,13 +304,14 @@ export function TakeoffProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const addPages = useCallback(
-    (incoming: { name: string; blueprint: string }[]) => {
+    (incoming: { name: string; blueprint: string; pxPerInch?: number | null }[]) => {
       if (incoming.length === 0) return
       const created = incoming.map((p) => ({
         id: `page-${pageCounter++}`,
         name: p.name,
         blueprint: p.blueprint,
         scale: null as number | null,
+        pxPerInch: p.pxPerInch ?? null,
       }))
       setPages((prev) => [...prev, ...created])
       setActivePageId(created[0].id)
@@ -310,12 +368,58 @@ export function TakeoffProvider({ children }: { children: ReactNode }) {
       if (!activePageId) return
       setPages((prev) =>
         prev.map((p) =>
-          p.id === activePageId ? { ...p, scale: pxPerFoot } : p,
+          p.id === activePageId
+            ? {
+                ...p,
+                scale: pxPerFoot,
+                scaleSource: pxPerFoot ? "manual" : null,
+                scaleNote: null,
+                scaleConfidence: null,
+              }
+            : p,
         ),
       )
       setDirty(true)
     },
     [activePageId],
+  )
+
+  const applyAutoTakeoff = useCallback<TakeoffState["applyAutoTakeoff"]>(
+    (pageId, run) => {
+      setPages((prev) =>
+        prev.map((p) => {
+          if (p.id !== pageId) return p
+          const next: Page = { ...p, autoTakeoff: run.record }
+          if (run.calibration) {
+            next.scale = run.calibration.scale
+            next.scaleSource = run.calibration.source
+            next.scaleNote = run.calibration.note
+            next.scaleConfidence = run.calibration.confidence
+          } else if (run.calibrationNote) {
+            next.scaleNote = run.calibrationNote
+          }
+          return next
+        }),
+      )
+      setSections((prev) => {
+        const kept = prev.filter(
+          (s) => !(s.pageId === pageId && s.source === "auto"),
+        )
+        const created: Section[] = run.sections.map((s) => ({
+          ...s,
+          id: `sec-${counter++}`,
+          pageId,
+          color: SECTION_PALETTE[colorCounter++ % SECTION_PALETTE.length],
+          rawValue: 0,
+          productId: null,
+        }))
+        return [...kept, ...created]
+      })
+      setSelectedSectionId(null)
+      setActiveTool("select")
+      setDirty(true)
+    },
+    [],
   )
 
   const markSaved = useCallback(() => setDirty(false), [])
@@ -514,6 +618,7 @@ export function TakeoffProvider({ children }: { children: ReactNode }) {
       deletePage,
       setActivePageBlueprint,
       setScale,
+      applyAutoTakeoff,
       setActiveTool,
       selectSection: setSelectedSectionId,
       addSection,
@@ -544,6 +649,7 @@ export function TakeoffProvider({ children }: { children: ReactNode }) {
       deletePage,
       setActivePageBlueprint,
       setScale,
+      applyAutoTakeoff,
       addSection,
       updateSection,
       deleteSection,

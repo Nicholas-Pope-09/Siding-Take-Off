@@ -1,6 +1,7 @@
 "use client"
 
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
+import { AutoReviewPanel } from "@/components/auto-review-panel"
 import {
   Table,
   TableBody,
@@ -39,6 +40,7 @@ import {
   Trash2,
   Crosshair,
   Sigma,
+  Sparkles,
 } from "lucide-react"
 
 function StatCard({
@@ -90,6 +92,9 @@ export function TakeoffSheet() {
     deleteSection,
     compute,
   } = useTakeoff()
+  const [tab, setTab] = useState<"sheet" | "review">("sheet")
+  const autoSections = sections.filter((s) => s.source === "auto")
+  const unverifiedCount = autoSections.filter((s) => !s.verified).length
 
   // Any page still needs calibration? Used for the summary warning.
   const uncalibrated = pages.some((p) => !p.scale)
@@ -149,6 +154,38 @@ export function TakeoffSheet() {
         </Badge>
       </div>
 
+      <div className="flex gap-1 border-b border-border px-3 py-1.5">
+        {(["sheet", "review"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium",
+              tab === t
+                ? "bg-primary/10 text-foreground"
+                : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+            )}
+          >
+            {t === "sheet" ? (
+              <Sigma className="size-3.5" />
+            ) : (
+              <Sparkles className="size-3.5" />
+            )}
+            {t === "sheet" ? "Take-Off" : "Review"}
+            {t === "review" && unverifiedCount > 0 && (
+              <Badge className="h-4 bg-accent px-1 text-[10px] tabular-nums text-accent-foreground">
+                {unverifiedCount}
+              </Badge>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {tab === "review" ? (
+        <AutoReviewPanel />
+      ) : (
+        <>
       {/* Project Total Summary */}
       <div className="border-b border-border p-4">
         <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
@@ -259,6 +296,18 @@ export function TakeoffSheet() {
                         )}
                         {pages.length > 1 && <span aria-hidden>·</span>}
                         {elevationLabel.replace(" Elevation", "")}
+                        {s.source === "auto" && (
+                          <span
+                            className={cn(
+                              "flex items-center gap-0.5",
+                              s.verified ? "text-primary" : "text-accent",
+                            )}
+                          >
+                            <span aria-hidden>·</span>
+                            <Sparkles className="size-3" />
+                            {s.verified ? "verified" : "unverified"}
+                          </span>
+                        )}
                       </span>
                     </TableCell>
                     <TableCell>
@@ -378,6 +427,8 @@ export function TakeoffSheet() {
           {totals.squares.toFixed(1)} sq
         </span>
       </div>
+        </>
+      )}
     </section>
   )
 }

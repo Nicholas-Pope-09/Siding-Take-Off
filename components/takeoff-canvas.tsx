@@ -35,6 +35,15 @@ import {
   type ToolType,
 } from "@/lib/takeoff-store"
 import {
+  boxFeet,
+  buildSections,
+  calibrate,
+  feetInches,
+  isManualScale,
+  prepareSheet,
+} from "@/lib/auto-takeoff/client"
+import type { AutoTakeoffResult } from "@/lib/auto-takeoff/schema"
+import {
   MousePointer2,
   Ruler,
   Spline,
@@ -52,6 +61,8 @@ import {
   Plus,
   Pencil,
   PencilRuler,
+  Sparkles,
+  Loader2,
 } from "lucide-react"
 
 const TOOLS: {
@@ -107,6 +118,7 @@ export function TakeoffCanvas() {
     selectSection,
     setSectionGeometry,
     updateSection,
+    applyAutoTakeoff,
     compute,
   } = useTakeoff()
 
@@ -125,6 +137,8 @@ export function TakeoffCanvas() {
   const [editingName, setEditingName] = useState("")
   const [draft, setDraft] = useState<Point[]>([])
   const [cursor, setCursor] = useState<Point | null>(null)
+  const [autoOpen, setAutoOpen] = useState(false)
+  const [autoRunning, setAutoRunning] = useState(false)
   const [calib, setCalib] = useState<{ pts: Point[]; open: boolean; feet: string }>({
     pts: [],
     open: false,
@@ -205,7 +219,13 @@ export function TakeoffCanvas() {
 
   const handlePdfPages = useCallback(
     (picked: PickedPage[]) => {
-      addPages(picked.map((p) => ({ name: p.label, blueprint: p.dataUrl })))
+      addPages(
+        picked.map((p) => ({
+          name: p.label,
+          blueprint: p.dataUrl,
+          pxPerInch: p.pxPerInch,
+        })),
+      )
       setPdfFile(null)
       toast.success(
         picked.length === 1
@@ -238,6 +258,100 @@ export function TakeoffCanvas() {
     },
     [setActivePageBlueprint],
   )
+
+  /* ----- auto take-off ----- */
+  const activePage = pages.find((p) => p.id === activePageId) ?? null
+  const activeAutoCount = sections.filter(
+    (s) => s.pageId === activePageId && s.source === "auto",
+  ).length
+
+  const runAutoTakeoff = useCallback(async () => {
+    const page = pages.find((p) => p.id === activePageId)
+    if (!page || autoRunning) return
+    setAutoOpen(false)
+    setAutoRunning(true)
+    const toastId = toast.loading(
+      `Reading ${page.name}… this usually takes 1–3 minutes.`,
+    )
+    try {
+      const sheet = await prepareSheet(page.blueprint)
+      const res = await fetch("/api/auto-takeoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image: sheet.base64,
+          mediaType: sheet.mediaType,
+          width: sheet.width,
+          height: sheet.height,
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json.error ?? `Request failed (${res.status}).`)
+      const result = json.result as AutoTakeoffResult
+
+      const auto = calibrate(result, sheet.toBlueprint, page.pxPerInch)
+      // A scale the estimator set by hand wins; the auto estimate is only reported.
+      const keepManual = isManualScale(page)
+      const manual = page.scale ?? 0
+      const calibrationNote = keepManual
+        ? auto
+          ? `Kept your manual calibration (${manual.toFixed(1)} px/ft). Auto estimate was ${auto.scale.toFixed(1)} px/ft (${((Math.abs(auto.scale - manual) / manual) * 100).toFixed(1)}% different). ${auto.note}`
+          : "Kept your manual calibration. No scale could be found automatically."
+        : auto
+          ? null
+          : "No scale note, dimensions, or standard-size items were found. Calibrate this sheet by hand."
+      const sections = buildSections(result, sheet)
+      applyAutoTakeoff(page.id, {
+        calibration: keepManual ? null : auto,
+        calibrationNote,
+        record: {
+          runAt: new Date().toISOString(),
+          model: json.model ?? "unknown",
+          imageFactor: sheet.toBlueprint,
+          result,
+        },
+        sections,
+      })
+      const openings = sections.filter((s) => s.type === "deduction").length
+      toast.success(
+        `${page.name}: ${sections.length - openings} wall/gable areas and ${openings} windows/doors found. Check them in the Review tab.`,
+        { id: toastId, duration: 8000 },
+      )
+      if (!keepManual && !auto)
+        toast.warning("No scale found. Calibrate this sheet by hand.")
+      else if (!keepManual && auto?.confidence === "low")
+        toast.warning("Scale was estimated from standard door sizes. Check it against a known length.")
+    } catch (err) {
+      toast.error((err as Error).message || "Auto take-off failed.", {
+        id: toastId,
+      })
+    } finally {
+      setAutoRunning(false)
+    }
+  }, [activePageId, applyAutoTakeoff, autoRunning, pages])
+
+  /* ----- bring the selected section into view (e.g. from the review list) ----- */
+  useEffect(() => {
+    const s = sections.find((x) => x.id === selectedSectionId)
+    const c = containerRef.current
+    if (!s || s.pageId !== activePageId || !s.points.length || !c || !imgSize) return
+    const xs = s.points.map((p) => p.x * view.scale + view.tx)
+    const ys = s.points.map((p) => p.y * view.scale + view.ty)
+    const inside =
+      Math.min(...xs) >= 0 &&
+      Math.min(...ys) >= 0 &&
+      Math.max(...xs) <= c.clientWidth &&
+      Math.max(...ys) <= c.clientHeight
+    if (inside) return
+    const cen = centroid(s.points)
+    setView((v) => ({
+      ...v,
+      tx: c.clientWidth / 2 - cen.x * v.scale,
+      ty: c.clientHeight / 2 - cen.y * v.scale,
+    }))
+    // Only react to a new selection or a newly loaded sheet, not to panning.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSectionId, imgSize])
 
   /* ----- finishing a draft ----- */
   const finishDraft = useCallback(() => {
@@ -485,6 +599,23 @@ export function TakeoffCanvas() {
           ))}
         </ToggleGroup>
 
+        <Separator />
+        <Button
+          size="sm"
+          className="h-9 gap-2"
+          disabled={!blueprint || autoRunning}
+          onClick={() => setAutoOpen(true)}
+        >
+          {autoRunning ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Sparkles className="size-4" />
+          )}
+          <span className="hidden text-xs font-medium lg:inline">
+            {autoRunning ? "Reading sheet…" : "Auto Take-Off"}
+          </span>
+        </Button>
+
         <div className="ml-auto flex items-center gap-2">
           <Badge
             variant={scale ? "secondary" : "outline"}
@@ -722,14 +853,11 @@ export function TakeoffCanvas() {
                 const pointsStr = s.points.map((p) => `${p.x},${p.y}`).join(" ")
                 const dims =
                   scale && s.geometry === "area" && s.points.length >= 2
-                    ? (() => {
-                        const xs = s.points.map((p) => p.x)
-                        const ys = s.points.map((p) => p.y)
-                        const w = (Math.max(...xs) - Math.min(...xs)) / scale
-                        const h = (Math.max(...ys) - Math.min(...ys)) / scale
-                        return { w, h }
-                      })()
+                    ? boxFeet(s.points, scale)
                     : null
+                // Auto measurements stay dashed until the estimator verifies them.
+                const unverified = s.source === "auto" && !s.verified
+                const dash = unverified ? "6 3" : undefined
                 return (
                   <g key={s.id} onClick={() => selectSection(s.id)}>
                     {s.geometry === "area" ? (
@@ -739,6 +867,7 @@ export function TakeoffCanvas() {
                         fillOpacity={isSel ? 0.32 : 0.16}
                         stroke={color}
                         strokeWidth={isSel ? 3 : 2}
+                        strokeDasharray={dash}
                         vectorEffect="non-scaling-stroke"
                         className="cursor-pointer"
                       />
@@ -769,19 +898,22 @@ export function TakeoffCanvas() {
                     {scale && (
                       <g transform={`translate(${cen.x} ${cen.y})`}>
                         <foreignObject
-                          x={-60 * inv}
+                          x={-70 * inv}
                           y={-16 * inv}
-                          width={120 * inv}
+                          width={140 * inv}
                           height={48 * inv}
                         >
                           <div
-                            style={{ transform: `scale(${inv})`, transformOrigin: "top left", width: 120, height: 48 }}
+                            style={{ transform: `scale(${inv})`, transformOrigin: "top left", width: 140, height: 48 }}
                           >
-                            <div className="flex w-full flex-col items-center justify-center gap-0.5">
+                            <div className="pointer-events-none flex w-full flex-col items-center justify-center gap-0.5">
                               <span
-                                className="rounded-md px-2 py-0.5 text-[11px] font-semibold tabular-nums text-background shadow"
+                                className="whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-semibold tabular-nums text-background shadow"
                                 style={{ background: color }}
                               >
+                                {s.name}
+                                {unverified ? "?" : ""}
+                                {" · "}
                                 {s.geometry === "area"
                                   ? `${c.slopeArea.toFixed(0)} sf`
                                   : `${c.baseArea.toFixed(0)} lf`}
@@ -791,7 +923,9 @@ export function TakeoffCanvas() {
                                   className="rounded px-1.5 py-px text-[10px] tabular-nums text-background/90 shadow"
                                   style={{ background: color, opacity: 0.8 }}
                                 >
-                                  {dims.w.toFixed(1)}′ × {dims.h.toFixed(1)}′
+                                  {s.opening
+                                    ? `${feetInches(dims.w)} × ${feetInches(dims.h)}`
+                                    : `${dims.w.toFixed(1)}′ × ${dims.h.toFixed(1)}′`}
                                 </span>
                               )}
                             </div>
@@ -1067,6 +1201,46 @@ export function TakeoffCanvas() {
           </div>
         )}
       </div>
+
+      {/* Auto take-off dialog */}
+      <Dialog open={autoOpen} onOpenChange={setAutoOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Auto take-off: {activePage?.name}</DialogTitle>
+            <DialogDescription>
+              Reads this sheet and measures every wall, gable, window, and door
+              on it. Each item is labeled on the plan and listed in the Review
+              tab, marked unverified until you check it.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="flex list-disc flex-col gap-1.5 pl-5 text-sm text-muted-foreground">
+            <li>
+              {activePage && isManualScale(activePage)
+                ? "Keeps your manual scale and reports the auto estimate for comparison."
+                : activePage?.pxPerInch
+                  ? "Calibrates from the printed scale and checks it against printed dimensions."
+                  : "Calibrates from printed dimensions, or from standard door sizes if there are none."}
+            </li>
+            {activeAutoCount > 0 && (
+              <li>
+                Replaces the {activeAutoCount} auto measurement
+                {activeAutoCount === 1 ? "" : "s"} already on this sheet.
+                Hand-drawn sections are kept.
+              </li>
+            )}
+            <li>Takes 1–3 minutes per sheet and uses the Anthropic API.</li>
+          </ul>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAutoOpen(false)}>
+              Cancel
+            </Button>
+            <Button className="gap-1.5" onClick={runAutoTakeoff}>
+              <Sparkles className="size-4" />
+              Run auto take-off
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Calibration dialog */}
       <Dialog
